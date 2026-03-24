@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# PyInstaller (cuando compilemos el .exe)
+build/
+dist/
+*.spec
+
+# React / Node (Frontend)
+src/node_modules/
+src/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
