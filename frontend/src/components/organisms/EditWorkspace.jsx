@@ -6,14 +6,14 @@ import { Button } from '../atoms/Button'
 
 export function EditWorkspace() {
     const [pages, setPages] = useState([])
-    const [selected, setSelected] = useState(new Set())
     const [filename, setFilename] = useState('')
+    const [selected, setSelected] = useState(new Set())
     const [isLoading, setIsLoading] = useState(false)
-    const [status, setStatus] = useState(null) // { type: 'success'|'error', message }
+    const [status, setStatus] = useState(null)
 
     const hasPages = pages.length > 0
 
-    // ── Cargar PDF ──────────────────────────────────────────────────────────────
+    // ── Cargar ──────────────────────────────────────────────────────────────────
     const handleLoad = async () => {
         setIsLoading(true)
         setStatus(null)
@@ -33,14 +33,33 @@ export function EditWorkspace() {
         }
     }
 
-    // ── Drag & drop ─────────────────────────────────────────────────────────────
-    const handleDragEnd = (result) => {
+    // ── Drag & drop → llama al backend con el nuevo orden ───────────────────────
+    const handleDragEnd = async (result) => {
         if (!result.destination) return
+        if (result.source.index === result.destination.index) return
+
+        // Actualizamos visualmente de inmediato
         const reordenado = Array.from(pages)
         const [movido] = reordenado.splice(result.source.index, 1)
         reordenado.splice(result.destination.index, 0, movido)
         setPages(reordenado)
-        setSelected(new Set()) // limpiamos selección al reordenar
+        setSelected(new Set())
+
+        // Mandamos el nuevo orden al backend
+        setIsLoading(true)
+        try {
+            const order = reordenado.map(p => p.page_index)
+            const res = await window.eel.api_editor_apply_order(order)()
+            if (res.success) {
+                setPages(res.thumbnails)
+            } else {
+                setStatus({ type: 'error', message: res.error })
+            }
+        } catch (e) {
+            setStatus({ type: 'error', message: 'Error al reordenar.' })
+        } finally {
+            setIsLoading(false)
+        }
     }
 
     // ── Selección ───────────────────────────────────────────────────────────────
@@ -53,40 +72,70 @@ export function EditWorkspace() {
     }
 
     // ── Eliminar una página ─────────────────────────────────────────────────────
-    const handleDelete = (index) => {
-        setPages(prev => prev.filter((_, i) => i !== index))
-        setSelected(prev => {
-            const next = new Set()
-            prev.forEach(i => { if (i !== index) next.add(i > index ? i - 1 : i) })
-            return next
-        })
+    const handleDelete = async (index) => {
+        const newOrder = pages
+            .filter((_, i) => i !== index)
+            .map(p => p.page_index)
+
+        setIsLoading(true)
+        setStatus(null)
+        try {
+            const res = await window.eel.api_editor_apply_order(newOrder)()
+            if (res.success) {
+                setPages(res.thumbnails)
+                setSelected(new Set())
+            } else {
+                setStatus({ type: 'error', message: res.error })
+            }
+        } catch (e) {
+            setStatus({ type: 'error', message: 'Error al eliminar.' })
+        } finally {
+            setIsLoading(false)
+        }
     }
 
     // ── Eliminar seleccionadas ──────────────────────────────────────────────────
-    const handleDeleteSelected = () => {
-        setPages(prev => prev.filter((_, i) => !selected.has(i)))
-        setSelected(new Set())
-    }
+    const handleDeleteSelected = async () => {
+        const newOrder = pages
+            .filter((_, i) => !selected.has(i))
+            .map(p => p.page_index)
 
-    // ── Insertar páginas ────────────────────────────────────────────────────────
-    const handleInsert = async () => {
         setIsLoading(true)
         setStatus(null)
-        // Insertamos después de la última seleccionada, o al final si no hay selección
+        try {
+            const res = await window.eel.api_editor_apply_order(newOrder)()
+            if (res.success) {
+                setPages(res.thumbnails)
+                setSelected(new Set())
+            } else {
+                setStatus({ type: 'error', message: res.error })
+            }
+        } catch (e) {
+            setStatus({ type: 'error', message: 'Error al eliminar.' })
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    // ── Insertar ────────────────────────────────────────────────────────────────
+    const handleInsert = async () => {
         const afterIndex = selected.size > 0
             ? Math.max(...selected)
             : pages.length - 1
+
+        setIsLoading(true)
+        setStatus(null)
         try {
-            const result = await window.eel.api_editor_insert_pages(pages, afterIndex)()
-            if (result.success) {
-                setPages(result.thumbnails)
+            const res = await window.eel.api_editor_insert_pages(afterIndex)()
+            if (res.success) {
+                setPages(res.thumbnails)
                 setSelected(new Set())
                 setStatus({ type: 'success', message: 'Páginas insertadas correctamente.' })
             } else {
-                setStatus({ type: 'error', message: result.error })
+                setStatus({ type: 'error', message: res.error })
             }
         } catch (e) {
-            setStatus({ type: 'error', message: 'Error al insertar páginas.' })
+            setStatus({ type: 'error', message: 'Error al insertar.' })
         } finally {
             setIsLoading(false)
         }
@@ -97,11 +146,11 @@ export function EditWorkspace() {
         setIsLoading(true)
         setStatus(null)
         try {
-            const result = await window.eel.api_editor_save(pages)()
-            if (result.success) {
-                setStatus({ type: 'success', message: `PDF guardado en: ${result.output_path}` })
+            const res = await window.eel.api_editor_save()()
+            if (res.success) {
+                setStatus({ type: 'success', message: `PDF guardado en: ${res.output_path}` })
             } else {
-                setStatus({ type: 'error', message: result.error })
+                setStatus({ type: 'error', message: res.error })
             }
         } catch (e) {
             setStatus({ type: 'error', message: 'Error al guardar.' })
@@ -119,11 +168,9 @@ export function EditWorkspace() {
         setStatus(null)
     }
 
-    // ── Render ──────────────────────────────────────────────────────────────────
     return (
         <div className="flex flex-col gap-6">
 
-            {/* Estado: sin PDF cargado */}
             {!hasPages && !isLoading && (
                 <div className="bg-white rounded-xl border-2 border-dashed border-slate-300 p-16 flex flex-col items-center gap-4">
                     <svg className="w-16 h-16 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -140,7 +187,6 @@ export function EditWorkspace() {
                 </div>
             )}
 
-            {/* Loading */}
             {isLoading && (
                 <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center gap-3">
                     <svg className="w-10 h-10 text-blue-500 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -151,7 +197,6 @@ export function EditWorkspace() {
                 </div>
             )}
 
-            {/* Toolbar + grid de páginas */}
             {hasPages && !isLoading && (
                 <>
                     <EditorToolbar
@@ -165,7 +210,6 @@ export function EditWorkspace() {
                         hasPages={hasPages}
                     />
 
-                    {/* Mensaje de estado */}
                     {status && (
                         <div className={`text-sm px-4 py-3 rounded-lg border ${status.type === 'success'
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -175,7 +219,6 @@ export function EditWorkspace() {
                         </div>
                     )}
 
-                    {/* Grid drag & drop */}
                     <DragDropContext onDragEnd={handleDragEnd}>
                         <Droppable droppableId="pages-grid" direction="horizontal">
                             {(provided) => (
@@ -185,7 +228,11 @@ export function EditWorkspace() {
                                     className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"
                                 >
                                     {pages.map((page, i) => (
-                                        <Draggable key={`page-${page.page_index}-${i}`} draggableId={`page-${page.page_index}-${i}`} index={i}>
+                                        <Draggable
+                                            key={`page-${page.page_index}-${i}`}
+                                            draggableId={`page-${page.page_index}-${i}`}
+                                            index={i}
+                                        >
                                             {(provided) => (
                                                 <PageThumbnail
                                                     page={page}

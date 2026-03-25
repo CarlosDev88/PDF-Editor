@@ -2,6 +2,7 @@ import eel
 import io
 import os
 import tempfile
+import shutil
 from pypdf import PdfWriter, PdfReader
 from app.infrastructure.dialog_manager import TkinterFileDialog
 from app.services.pdf_merger import PdfMergerService
@@ -12,39 +13,33 @@ merger_service = PdfMergerService()
 editor_service = PdfEditorService()
 
 # ── SESIÓN DEL EDITOR ──────────────────────────────────────────────────────────
-# _session_path apunta siempre al estado actual del PDF en edición (archivo temporal)
 _editor_session = {
-    "original_path": None,   # PDF que el usuario abrió
-    "working_path": None,    # archivo temporal con el estado actual
+    "original_path": None,
+    "temp_path": None,      # único temporal activo
     "page_count": 0,
 }
 
-def _update_working_file(pages_data: list) -> str:
-    """
-    Recibe la lista de páginas actual desde el frontend
-    [{page_index, thumbnail_base64, ...}] y construye un nuevo
-    archivo temporal con ese orden. Retorna la ruta del temporal.
-    """
-    reader = PdfReader(_editor_session["working_path"])
-    writer = PdfWriter()
-    for page in pages_data:
-        writer.add_page(reader.pages[page["page_index"]])
-
+def _new_temp_path() -> str:
+    """Genera una ruta para un nuevo archivo temporal."""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    writer.write(tmp)
-    writer.close()
     tmp.close()
+    return tmp.name
 
-    # Borramos el temporal anterior
-    old = _editor_session["working_path"]
+def _update_temp(new_path: str):
+    """Actualiza el temporal activo, borrando el anterior."""
+    old = _editor_session["temp_path"]
     if old and old != _editor_session["original_path"] and os.path.exists(old):
         try:
             os.unlink(old)
-        except Exception:
-            pass
+            print(f"[Session] Temporal anterior borrado: {old}")
+        except Exception as e:
+            print(f"[Session] No se pudo borrar temporal: {e}")
+    _editor_session["temp_path"] = new_path
+    print(f"[Session] Nuevo temporal activo: {new_path}")
 
-    _editor_session["working_path"] = tmp.name
-    return tmp.name
+def _current_path() -> str:
+    """Retorna el archivo activo (temporal si existe, original si no)."""
+    return _editor_session["temp_path"] or _editor_session["original_path"]
 
 
 # ── MERGE ──────────────────────────────────────────────────────────────────────
@@ -69,7 +64,6 @@ def api_merge_pdfs(input_paths: list, output_filename: str = "resultado.pdf") ->
     try:
         if not input_paths or len(input_paths) < 2:
             return {"success": False, "error": "Se necesitan al menos 2 archivos PDF."}
-
         output_path = dialog_service.ask_save_filename(
             title="Guardar PDF unido",
             default_filename=output_filename,
@@ -79,7 +73,6 @@ def api_merge_pdfs(input_paths: list, output_filename: str = "resultado.pdf") ->
             return {"success": False, "error": "Operación cancelada."}
         if not output_path.lower().endswith(".pdf"):
             output_path += ".pdf"
-
         result_path, omitidos = merger_service.merge(input_paths, output_path)
         respuesta = {"success": True, "output_path": result_path, "omitidos": omitidos}
         if omitidos:
@@ -96,7 +89,6 @@ def api_merge_pdfs(input_paths: list, output_filename: str = "resultado.pdf") ->
 
 @eel.expose
 def api_editor_load_pdf() -> dict:
-    """Carga un PDF, genera thumbnails y prepara la sesión de edición."""
     print("[API] >>> Cargando PDF para editar")
     try:
         paths = dialog_service.ask_open_filenames(
@@ -107,10 +99,13 @@ def api_editor_load_pdf() -> dict:
             return {"success": False, "error": "Operación cancelada."}
 
         path = paths[0]
-        thumbnails = editor_service.get_page_thumbnails(path)
 
+        # Limpiamos sesión anterior si existe
+        _update_temp(None)
         _editor_session["original_path"] = path
-        _editor_session["working_path"] = path  # al inicio working = original
+        _editor_session["temp_path"] = None
+
+        thumbnails = editor_service.get_page_thumbnails(path)
         _editor_session["page_count"] = len(thumbnails)
 
         print(f"[API] PDF cargado: {path} ({len(thumbnails)} páginas)")
@@ -126,15 +121,39 @@ def api_editor_load_pdf() -> dict:
 
 
 @eel.expose
-def api_editor_insert_pages(current_pages: list, after_index: int) -> dict:
+def api_editor_apply_order(page_order: list) -> dict:
     """
-    Inserta páginas de un PDF nuevo después de after_index.
-    current_pages = estado actual de páginas desde el frontend.
-    after_index = -1 para insertar al principio.
+    Recibe el orden actual de páginas desde React y genera un nuevo temporal.
+    Se llama en cada reordenamiento o eliminación.
+    page_order = [2, 0, 1, ...] índices de las páginas en el orden visual actual.
     """
+    print(f"[API] >>> Aplicando orden: {page_order}")
+    try:
+        source = _current_path()
+        if not source:
+            return {"success": False, "error": "No hay PDF cargado."}
+
+        new_temp = _new_temp_path()
+        editor_service.build_pdf_from_order(source, page_order, new_temp)
+        _update_temp(new_temp)
+
+        # Generamos thumbnails frescos del nuevo temporal
+        thumbnails = editor_service.get_page_thumbnails(new_temp)
+        _editor_session["page_count"] = len(thumbnails)
+
+        return {"success": True, "thumbnails": thumbnails}
+    except Exception as e:
+        print(f"[API] Error al aplicar orden: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+@eel.expose
+def api_editor_insert_pages(after_index: int) -> dict:
+    """Inserta páginas después de after_index en el temporal activo."""
     print(f"[API] >>> Insertando páginas después del índice {after_index}")
     try:
-        if not _editor_session["working_path"]:
+        source = _current_path()
+        if not source:
             return {"success": False, "error": "No hay PDF cargado."}
 
         paths = dialog_service.ask_open_filenames(
@@ -144,33 +163,34 @@ def api_editor_insert_pages(current_pages: list, after_index: int) -> dict:
         if not paths:
             return {"success": False, "error": "Operación cancelada."}
 
-        # Primero sincronizamos el working file con el estado actual del frontend
-        _update_working_file(current_pages)
+        # Si seleccionaron varios PDFs, los combinamos en un temporal intermedio
+        if len(paths) > 1:
+            combined_writer = PdfWriter()
+            for p in paths:
+                reader = PdfReader(p)
+                if reader.is_encrypted:
+                    reader.decrypt("")
+                for page in reader.pages:
+                    combined_writer.add_page(page)
+            combined_tmp = _new_temp_path()
+            with open(combined_tmp, "wb") as f:
+                combined_writer.write(f)
+            combined_writer.close()
+            insert_source = combined_tmp
+        else:
+            insert_source = paths[0]
+            combined_tmp = None
 
-        # Unimos todos los PDFs a insertar en uno temporal
-        insert_writer = PdfWriter()
-        for p in paths:
-            reader = PdfReader(p)
-            for page in reader.pages:
-                insert_writer.add_page(page)
-        insert_buffer = io.BytesIO()
-        insert_writer.write(insert_buffer)
-        insert_writer.close()
-        insert_buffer.seek(0)
+        new_temp = _new_temp_path()
+        editor_service.insert_pages(source, insert_source, after_index, new_temp)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_insert:
-            tmp_insert.write(insert_buffer.read())
-            tmp_insert_path = tmp_insert.name
+        # Limpiamos el temporal intermedio si lo creamos
+        if combined_tmp and os.path.exists(combined_tmp):
+            os.unlink(combined_tmp)
 
-        # Insertamos en el working file
-        thumbnails = editor_service.insert_pages(
-            _editor_session["working_path"], tmp_insert_path, after_index
-        )
-        os.unlink(tmp_insert_path)
+        _update_temp(new_temp)
 
-        # Guardamos el resultado como nuevo working file
-        # (insert_pages retorna thumbnails del resultado en memoria,
-        #  necesitamos también guardar ese resultado)
+        thumbnails = editor_service.get_page_thumbnails(new_temp)
         _editor_session["page_count"] = len(thumbnails)
 
         print(f"[API] Páginas insertadas. Total: {len(thumbnails)}")
@@ -181,14 +201,12 @@ def api_editor_insert_pages(current_pages: list, after_index: int) -> dict:
 
 
 @eel.expose
-def api_editor_save(current_pages: list) -> dict:
-    """
-    Guarda el PDF con el orden actual de páginas.
-    current_pages = [{page_index, ...}] desde el frontend.
-    """
-    print(f"[API] >>> Guardando PDF editado ({len(current_pages)} páginas)")
+def api_editor_save() -> dict:
+    """Guarda el temporal activo en la ruta que elija el usuario."""
+    print("[API] >>> Guardando PDF editado")
     try:
-        if not _editor_session["working_path"]:
+        source = _current_path()
+        if not source:
             return {"success": False, "error": "No hay PDF cargado."}
 
         output_path = dialog_service.ask_save_filename(
@@ -201,11 +219,7 @@ def api_editor_save(current_pages: list) -> dict:
         if not output_path.lower().endswith(".pdf"):
             output_path += ".pdf"
 
-        # Sincronizamos estado actual y guardamos definitivamente
-        working = _update_working_file(current_pages)
-        import shutil
-        shutil.copy2(working, output_path)
-
+        shutil.copy2(source, output_path)
         print(f"[API] PDF guardado en: {output_path}")
         return {"success": True, "output_path": output_path}
     except Exception as e:
@@ -217,11 +231,9 @@ def api_editor_save(current_pages: list) -> dict:
 def api_editor_reset() -> dict:
     """Limpia la sesión del editor."""
     try:
-        old = _editor_session["working_path"]
-        if old and old != _editor_session["original_path"] and os.path.exists(old):
-            os.unlink(old)
+        _update_temp(None)
         _editor_session["original_path"] = None
-        _editor_session["working_path"] = None
+        _editor_session["temp_path"] = None
         _editor_session["page_count"] = 0
         return {"success": True}
     except Exception as e:
