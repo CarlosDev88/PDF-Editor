@@ -49,3 +49,27 @@ class IPdfSplitter(ABC):
         Retorna lista de rutas generadas.
         """
         pass
+
+
+class IPdfSigner(ABC):
+    @abstractmethod
+    def sign(
+        self,
+        source_path: str,
+        signature_path: str,
+        placements: list,
+        output_path: str
+    ) -> str:
+        """
+        Incrusta la firma en el PDF.
+        placements = [
+            {
+                "page": 0,          # índice 0-based
+                "x": 100.0,         # puntos PDF desde esquina inferior izquierda
+                "y": 200.0,
+                "width": 150.0,
+                "height": 50.0
+            }
+        ]
+        """
+        pass

@@ -4,6 +4,7 @@ import { HomePage } from './pages/HomePage'
 import { PdfMergerPage } from './pages/PdfMergerPage';
 import { EditPage } from './pages/EditPage'
 import { SplitPage } from './pages/SplitPage'
+import { SignPage } from './pages/SignPage'
 
 function App() {
 
@@ -14,6 +15,7 @@ function App() {
         <Route path="merge" element={<PdfMergerPage />} />
         <Route path="edit" element={<EditPage />} />
         <Route path="split" element={<SplitPage />} />
+        <Route path="sign" element={<SignPage />} />
       </Route>
     </Routes>
   )
