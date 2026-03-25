@@ -3,6 +3,7 @@ import { MainLayout } from './components/templates/MainLayout'
 import { HomePage } from './pages/HomePage'
 import { PdfMergerPage } from './pages/PdfMergerPage';
 import { EditPage } from './pages/EditPage'
+import { SplitPage } from './pages/SplitPage'
 
 function App() {
 
@@ -12,6 +13,7 @@ function App() {
         <Route index element={<HomePage />} />
         <Route path="merge" element={<PdfMergerPage />} />
         <Route path="edit" element={<EditPage />} />
+        <Route path="split" element={<SplitPage />} />
       </Route>
     </Routes>
   )

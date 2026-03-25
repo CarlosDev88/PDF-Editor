@@ -94,3 +94,35 @@ class TkinterFileDialog(IFileDialog):
 
         print(f"[Dialog] Archivo guardado en: {resultado[0] if resultado else 'Cancelado'}")
         return resultado[0] if resultado else ""
+    
+    def ask_directory(self, title: str = "Seleccionar carpeta de destino") -> str:
+        resultado = [None]
+        evento = threading.Event()
+
+        def _abrir_dialogo():
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                root.update()
+                ruta = filedialog.askdirectory(title=title)                 
+                resultado[0] = ruta if ruta else ""
+            except Exception as e:
+                print(f"[Dialog] Error al abrir diálogo de carpeta: {e}")
+                resultado[0] = ""
+
+            finally:
+                 root.destroy()
+                 evento.set()       
+                    
+
+        hilo = threading.Thread(target=_abrir_dialogo, daemon=True)
+        hilo.start()
+
+        evento.wait(timeout=300)
+
+        print(f"[Dialog] Carpeta seleccionada: {resultado[0] if resultado else 'Cancelado'}")
+        return resultado[0] if resultado[0] is not None else ""
+    

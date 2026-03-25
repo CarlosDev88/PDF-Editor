@@ -30,3 +30,22 @@ class IPdfEditor(ABC):
     @abstractmethod
     def insert_pages(self, source_path: str, insert_path: str, after_index: int, output_path: str) -> str:
         pass
+
+
+class IPdfSplitter(ABC):
+    @abstractmethod
+    def split_by_ranges(self, source_path: str, ranges: List[Tuple[int, int]], output_dir: str, base_name: str) -> List[str]:
+        """
+        Divide el PDF por rangos. Cada rango genera un PDF.
+        ranges = [(0, 2), (4, 6)] — índices 0-based inclusivos.
+        Retorna lista de rutas generadas.
+        """
+        pass
+
+    @abstractmethod
+    def split_by_pages(self, source_path: str, page_indices: List[int], output_dir: str, base_name: str) -> List[str]:
+        """
+        Genera un PDF por cada página en page_indices.
+        Retorna lista de rutas generadas.
+        """
+        pass
