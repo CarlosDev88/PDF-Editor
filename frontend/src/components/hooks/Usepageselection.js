@@ -2,11 +2,7 @@ import { useState } from 'react'
 
 /**
  * Gestiona la selección múltiple de páginas con un Set de índices.
- *
- * Se extrae porque es lógica pura y reutilizable: no sabe nada
- * de PDFs, solo maneja un conjunto de índices seleccionados.
- * Fácilmente testeable sin montar ningún componente.
- *
+
  * Expone:
  *   selected        — Set<number> con los índices seleccionados
  *   toggle(index)   — agrega o quita un índice

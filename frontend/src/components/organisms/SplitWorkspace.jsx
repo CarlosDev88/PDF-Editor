@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { Button } from '../atoms/Button'
 import { Badge } from '../atoms/Badge'
 import { RangeInput } from '../molecules/RangeInput'
+import { PagePickerGrid } from '../molecules/PagePickerGrid'
+import { useSplitterPdf } from '../hooks/useSplitterPdf'
+import { usePageSelection } from '../hooks/usePageSelection'
 
 const MODES = [
     { id: 'ranges', label: 'Por rango' },
@@ -10,97 +13,28 @@ const MODES = [
 
 export function SplitWorkspace() {
     const [mode, setMode] = useState('ranges')
-    const [filename, setFilename] = useState('')
-    const [totalPages, setTotalPages] = useState(0)
-    const [thumbnails, setThumbnails] = useState([])
-    const [selected, setSelected] = useState(new Set())
-    const [ranges, setRanges] = useState([{ start: 1, end: 1 }])
-    const [isLoading, setIsLoading] = useState(false)
-    const [status, setStatus] = useState(null)
+
+    const { selected, toggle, clear } = usePageSelection()
+
+    const {
+        filename, totalPages, thumbnails,
+        ranges, setRanges,
+        isLoading, status,
+        load, splitByRanges, splitByPages, reset,
+    } = useSplitterPdf(clear) // clear al cargar nuevo PDF
 
     const hasFile = !!filename
 
-    // ── Cargar PDF ──────────────────────────────────────────────────────────────
-    const handleLoad = async () => {
-        setIsLoading(true)
-        setStatus(null)
-        try {
-            const res = await window.eel.api_splitter_load_pdf()()
-            if (res.success) {
-                setFilename(res.filename)
-                setTotalPages(res.page_count)
-                setThumbnails(res.thumbnails)
-                setRanges([{ start: 1, end: res.page_count }])
-                setSelected(new Set())
-                setStatus(null)
-            } else {
-                setStatus({ type: 'error', message: res.error })
-            }
-        } catch (e) {
-            setStatus({ type: 'error', message: 'Error al cargar el PDF.' })
-        } finally {
-            setIsLoading(false)
-        }
+    const handleModeChange = (newMode) => {
+        setMode(newMode)
+        clear()
     }
 
-    // ── Selección de páginas ────────────────────────────────────────────────────
-    const handleTogglePage = (index) => {
-        setSelected(prev => {
-            const next = new Set(prev)
-            next.has(index) ? next.delete(index) : next.add(index)
-            return next
-        })
+    const handleSplit = () => {
+        mode === 'ranges' ? splitByRanges() : splitByPages(selected)
     }
 
-    // ── Dividir ─────────────────────────────────────────────────────────────────
-    const handleSplit = async () => {
-        setIsLoading(true)
-        setStatus(null)
-        try {
-            let res
-
-            if (mode === 'ranges') {
-                // Convertimos a índices 0-based
-                const parsed = ranges.map(r => ({
-                    start: r.start - 1,
-                    end: r.end - 1
-                }))
-                res = await window.eel.api_splitter_by_ranges(parsed)()
-            } else {
-                const indices = Array.from(selected).sort((a, b) => a - b)
-                res = await window.eel.api_splitter_by_pages(indices)()
-            }
-
-            if (res.success) {
-                setStatus({
-                    type: 'success',
-                    message: `✓ ${res.count} PDF(s) generado(s) correctamente.`,
-                    files: res.generated
-                })
-            } else {
-                setStatus({ type: 'error', message: res.error })
-            }
-        } catch (e) {
-            setStatus({ type: 'error', message: 'Error al dividir el PDF.' })
-        } finally {
-            setIsLoading(false)
-        }
-    }
-
-    // ── Resetear ────────────────────────────────────────────────────────────────
-    const handleReset = async () => {
-        await window.eel.api_splitter_reset()()
-        setFilename('')
-        setTotalPages(0)
-        setThumbnails([])
-        setSelected(new Set())
-        setRanges([{ start: 1, end: 1 }])
-        setStatus(null)
-    }
-
-    const canSplit = mode === 'ranges'
-        ? ranges.length > 0
-        : selected.size > 0
+    const canSplit = mode === 'ranges' ? ranges.length > 0 : selected.size > 0
 
     return (
         <div className="flex flex-col gap-6">
@@ -113,7 +47,7 @@ export function SplitWorkspace() {
                             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     <p className="text-slate-500 text-sm">Ningún PDF cargado</p>
-                    <Button onClick={handleLoad} variant="primary">
+                    <Button onClick={load} variant="primary">
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
                         </svg>
@@ -147,7 +81,7 @@ export function SplitWorkspace() {
                                 )}
                             </div>
                         </div>
-                        <Button onClick={handleReset} variant="danger">
+                        <Button onClick={reset} variant="danger">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
                                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -162,9 +96,9 @@ export function SplitWorkspace() {
                             {MODES.map(m => (
                                 <button
                                     key={m.id}
-                                    onClick={() => { setMode(m.id); setSelected(new Set()) }}
+                                    onClick={() => handleModeChange(m.id)}
                                     className={`flex-1 py-3 text-sm font-semibold transition-colors duration-150
-                    ${mode === m.id
+                                        ${mode === m.id
                                             ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
                                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
                                         }`}
@@ -175,7 +109,6 @@ export function SplitWorkspace() {
                         </div>
 
                         <div className="p-6">
-                            {/* Modo: Por rango */}
                             {mode === 'ranges' && (
                                 <div className="flex flex-col gap-4">
                                     <p className="text-sm text-slate-500">
@@ -189,42 +122,16 @@ export function SplitWorkspace() {
                                 </div>
                             )}
 
-                            {/* Modo: Por páginas */}
                             {mode === 'pages' && (
                                 <div className="flex flex-col gap-4">
                                     <p className="text-sm text-slate-500">
                                         Selecciona las páginas. Cada página generará un PDF independiente.
                                     </p>
-                                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                                        {thumbnails.map((page, i) => (
-                                            <button
-                                                key={i}
-                                                onClick={() => handleTogglePage(i)}
-                                                className={`relative rounded-lg border-2 transition-all duration-150 overflow-hidden
-                          ${selected.has(i)
-                                                        ? 'border-blue-500 shadow-md shadow-blue-100'
-                                                        : 'border-slate-200 hover:border-slate-300'
-                                                    }`}
-                                            >
-                                                {selected.has(i) && (
-                                                    <div className="absolute top-1.5 right-1.5 z-10 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                                                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
-                                                        </svg>
-                                                    </div>
-                                                )}
-                                                <img
-                                                    src={page.thumbnail_base64}
-                                                    alt={`Página ${i + 1}`}
-                                                    className="w-full"
-                                                    draggable={false}
-                                                />
-                                                <div className="py-1 text-center text-xs font-medium text-slate-500 border-t border-slate-100">
-                                                    {i + 1}
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
+                                    <PagePickerGrid
+                                        thumbnails={thumbnails}
+                                        selected={selected}
+                                        onToggle={toggle}
+                                    />
                                 </div>
                             )}
                         </div>
@@ -240,29 +147,21 @@ export function SplitWorkspace() {
                             {status.files && (
                                 <ul className="mt-2 space-y-1">
                                     {status.files.map((f, i) => (
-                                        <li key={i} className="text-xs text-emerald-600 truncate">
-                                            • {f}
-                                        </li>
+                                        <li key={i} className="text-xs text-emerald-600 truncate">• {f}</li>
                                     ))}
                                 </ul>
                             )}
                         </div>
                     )}
 
-                    {/* Botón dividir */}
-                    <Button
-                        onClick={handleSplit}
-                        variant="success"
-                        disabled={!canSplit}
-                        className="w-full py-4 text-base"
-                    >
+                    {/* Acción principal */}
+                    <Button onClick={handleSplit} variant="success" disabled={!canSplit} className="w-full py-4 text-base">
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
                                 d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
                         </svg>
                         Dividir PDF
                         {mode === 'ranges' && ranges.length > 0 && ` (${ranges.length} archivo${ranges.length > 1 ? 's' : ''})`}
-                        {/* {mode === 'pages' && selected.size > 0 && ` (${selected.size} archivo${selected.size > 1 ? 's' : ''})`} */}
                     </Button>
                 </>
             )}
